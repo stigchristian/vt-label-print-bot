@@ -1,0 +1,4 @@
+slack-bolt
+reportlab
+svglib
+requests
