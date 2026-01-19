@@ -307,6 +307,8 @@ def print_slack_txt_file(client, printer_settings, slack_file_private_download_u
 
     data = resp.content
     lines = data.decode("utf-8", errors="replace").splitlines()
+    lines = [s for s in lines if s.strip()]
+
 
     pdf_bytes = create_pdf_with_safe_area_centered_textbox(
         lines,
