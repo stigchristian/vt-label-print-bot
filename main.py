@@ -1,7 +1,7 @@
 import os
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-
+from typing import Any
 import io
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
@@ -12,6 +12,7 @@ import base64
 import requests
 import re
 from typing import Tuple, Optional
+from devtools import debug
 
 channel_id_to_printer_settings_map = {
     "C0A9B0T1938": {
@@ -110,24 +111,9 @@ def draw_svg_bottom_right(c, drawing, scaled_w, margin_pt, page_w):
     renderPDF.draw(drawing, c, x, y)
 
 
-def create_pdf_with_safe_area_centered_textbox(
-    text,
-    page_w_mm=100,
-    page_h_mm=75,
-    margin_mm=4,
-    font_name="Helvetica",
-    font_size=200,
-    leading_factor=1.2,
-    padding_mm=2,
+def add_page_with_text(
+    c, text, font_size, font_name, page_w, page_h, margin, padding, leading_factor
 ):
-    page_w = page_w_mm * mm
-    page_h = page_h_mm * mm
-    margin = margin_mm * mm
-    padding = padding_mm * mm
-
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(page_w, page_h))
-
     # Safe area: reserve a bottom band for logo + margins + gap
     safe_left = margin
     safe_right = page_w - margin
@@ -179,7 +165,36 @@ def create_pdf_with_safe_area_centered_textbox(
         c.drawString(text_x, text_y, line)
         text_y -= leading
 
-    c.showPage()
+
+def create_pdf_with_safe_area_centered_textbox(
+    text: str | list[str],
+    page_w_mm=100,
+    page_h_mm=75,
+    margin_mm=4,
+    font_name="Helvetica",
+    font_size=200,
+    leading_factor=1.2,
+    padding_mm=2,
+):
+    page_w = page_w_mm * mm
+    page_h = page_h_mm * mm
+    margin = margin_mm * mm
+    padding = padding_mm * mm
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=(page_w, page_h))
+
+    if isinstance(text, str):
+        text = [text]
+
+    for t in text:
+        if t == "":
+            continue
+        add_page_with_text(
+            c, t, font_size, font_name, page_w, page_h, margin, padding, leading_factor
+        )
+        c.showPage()
+
     c.save()
 
     return buf.getvalue()
@@ -269,7 +284,7 @@ def hello_command(body, ack, respond, client, logger):
         ack("No label printer configured for this channel")
 
 
-def print_from_slack_file(client, printer_id, slack_file_private_download_url):
+def print_slack_pdf_file(client, printer_id, slack_file_private_download_url):
     resp = requests.get(
         slack_file_private_download_url,
         headers={"Authorization": f"Bearer {client.token}"},
@@ -282,18 +297,72 @@ def print_from_slack_file(client, printer_id, slack_file_private_download_url):
     print_pdf_with_printnode(printer_id, data)
 
 
+def print_slack_txt_file(client, printer_settings, slack_file_private_download_url):
+    resp = requests.get(
+        slack_file_private_download_url,
+        headers={"Authorization": f"Bearer {client.token}"},
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+    data = resp.content
+    lines = data.decode("utf-8", errors="replace").splitlines()
+
+    pdf_bytes = create_pdf_with_safe_area_centered_textbox(
+        lines,
+        page_w_mm=printer_settings.get("label_width_mm"),
+        page_h_mm=printer_settings.get("label_height_mm"),
+    )
+
+    print_pdf_with_printnode(printer_settings.get("printer_id"), pdf_bytes, qty=1)
+
+    return len(lines)
+
+
 @app.event("file_shared")
 def handle_file_shared_events(body, ack, respond, client, logger):
     file_info = client.files_info(file=body["event"]["file_id"])
-    download_url = file_info["file"]["url_private_download"]
+
+    # debug(file_info["file"])
 
     if printer_settings := channel_id_to_printer_settings_map.get(
         body["event"]["channel_id"]
     ):
-        print("printing from slack file")
-        print_from_slack_file(client, printer_settings.get("printer_id"), download_url)
+        if (
+            file_info["file"]["filetype"] != "pdf"
+            and file_info["file"]["filetype"] != "text"
+        ):
+            client.chat_postMessage(
+                channel=body["event"]["channel_id"],
+                text="Only PDF and plain text files are supported.",
+            )
+            return
+
+        download_url = file_info["file"]["url_private_download"]
+
+        if file_info["file"]["filetype"] == "pdf":
+            print("Printing PDF posted to the Slack Channel")
+            print_slack_pdf_file(
+                client, printer_settings.get("printer_id"), download_url
+            )
+            client.chat_postMessage(
+                channel=body["event"]["channel_id"],
+                text=":printer: Printing the posted PDF file :point_up:",
+            )
+
+        if file_info["file"]["filetype"] == "text":
+            print("Printing text file posted to the Slack Channel")
+            label_qty = print_slack_txt_file(client, printer_settings, download_url)
+            client.chat_postMessage(
+                channel=body["event"]["channel_id"],
+                text=f":printer: Printing {label_qty} labels based the posted text file :point_up:",
+            )
+
     else:
-        ack("No label printer configured for this channel.")
+        client.chat_postMessage(
+            channel=body["event"]["channel_id"],
+            text="No label printer is designated to handle this channel.",
+        )
 
 
 # Start your app
