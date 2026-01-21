@@ -25,6 +25,11 @@ channel_id_to_printer_settings_map = {
         "label_width_mm": 192,
         "label_height_mm": 102,
     },
+    "C0AAWHQUKR6": {
+        "printer_id": 72775345,
+        "label_width_mm": 192,
+        "label_height_mm": 102,
+    },
 }
 
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
