@@ -13,6 +13,8 @@ import requests
 import re
 from typing import Tuple, Optional
 from devtools import debug
+from typing import Tuple
+
 
 channel_id_to_printer_settings_map = {
     "C0A9B0T1938": {
@@ -35,7 +37,7 @@ channel_id_to_printer_settings_map = {
 app = App(token=os.environ.get("SLACK_BOT_TOKEN"))
 
 
-def wrap_text_to_width(text, font_name, font_size, max_width_pt):
+def wrap_text_to_width(text: str, font_name, font_size, max_width_pt):
     words = text.split()
     if not words:
         return [""]
@@ -53,9 +55,9 @@ def wrap_text_to_width(text, font_name, font_size, max_width_pt):
     return lines
 
 
-def layout_lines(text, font_name, font_size, max_text_width_pt):
+def layout_lines(text: str, font_name, font_size, max_text_width_pt):
     if "\n" in text:
-        return text.splitlines() or [""]
+        return [l.strip() for l in text.splitlines()] or [""]
     return wrap_text_to_width(text, font_name, font_size, max_text_width_pt)
 
 
@@ -195,6 +197,8 @@ def create_pdf_with_safe_area_centered_textbox(
     for t in text:
         if t == "":
             continue
+
+        t = t.replace("||", "\n")
         add_page_with_text(
             c, t, font_size, font_name, page_w, page_h, margin, padding, leading_factor
         )
@@ -214,10 +218,16 @@ def print_pdf_with_printnode(
     qty: int = 1,
     options: dict | None = None,
     timeout_s: int = 30,
-) -> int:
+) -> bool:
     """
     Sends a PDF to PrintNode using pdf_base64 and returns the created printJob id (integer).
     """
+
+    if os.environ.get("DEBUG") == "1":
+        with open("debug.pdf", "wb") as pdf_file:
+            pdf_file.write(pdf_bytes)
+
+        return True
 
     pdf_b64 = base64.b64encode(pdf_bytes).decode("ascii")
 
@@ -243,11 +253,11 @@ def print_pdf_with_printnode(
     if r.status_code != 201:
         try:
             details = r.json()
+            return True
         except Exception:
             details = r.text
         raise RuntimeError(f"PrintNode error {r.status_code}: {details}")
 
-    return int(r.json())
 
 
 def parse_qty(text: str) -> Tuple[Optional[int], str]:
@@ -268,10 +278,20 @@ def parse_qty(text: str) -> Tuple[Optional[int], str]:
     cleaned = re.sub(r"\s+", " ", cleaned)
     return qty, cleaned
 
+def strip_print_flag(s: str, token: str = "::p") -> Tuple[bool, str]:
+    """
+    If token is found in s, remove all occurrences and return (True, cleaned).
+    Otherwise return (False, original).
+    """
+    if token in s:
+        return True, s.replace(token, "")
+    return False, s
+
 
 @app.command("/l")
 def hello_command(body, ack, respond, client, logger):
     qty, clean_text = parse_qty(body["text"])
+    # preview, clean_text = strip_print_flag(clean_text, token="::p")
 
     if printer_settings := channel_id_to_printer_settings_map.get(body["channel_id"]):
         pdf_bytes = create_pdf_with_safe_area_centered_textbox(
@@ -280,8 +300,6 @@ def hello_command(body, ack, respond, client, logger):
             page_h_mm=printer_settings.get("label_height_mm"),
         )
 
-        # with open("test.pdf", "wb") as f:
-        #     f.write(pdf_bytes)
 
         print_pdf_with_printnode(printer_settings.get("printer_id"), pdf_bytes, qty=qty)
         ack("Printing now")
