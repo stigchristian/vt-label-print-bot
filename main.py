@@ -42,6 +42,11 @@ channel_id_to_printer_settings_map = {
         "printer_id": 75117494,
         "label_width_mm": 90,
         "label_height_mm": 60,
+    },
+    "C0ACS7DNNDP": {
+        "printer_id": 75139652,
+        "label_width_mm": 102,
+        "label_height_mm": 192,
     }
 
 }
