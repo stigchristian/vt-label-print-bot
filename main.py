@@ -186,7 +186,7 @@ def add_page_with_text(
     text_y = text_top - current_size  # baseline approximation
 
     for line in lines:
-        c.drawString(text_x, text_y, line)
+        c.drawCentredString(text_x, text_y, line)
         text_y -= leading
 
 
